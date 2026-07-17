@@ -6,7 +6,7 @@ struct AssistantView: View {
     @EnvironmentObject private var store: GameStore
     @State private var showTilePicker = false
     @State private var inputMode: GameInputMode = .addToHand
-    @State private var showCamera = false
+    @State private var showLiveCamera = false
     @State private var photoItem: PhotosPickerItem?
 
     var body: some View {
@@ -70,11 +70,8 @@ struct AssistantView: View {
                     }
                 )
             }
-            .sheet(isPresented: $showCamera) {
-                CameraPicker { data in
-                    Task { await store.analyzeImage(data) }
-                }
-                .ignoresSafeArea()
+            .fullScreenCover(isPresented: $showLiveCamera) {
+                LiveCameraView(store: store)
             }
             .onChange(of: photoItem) { item in
                 guard let selectedItem = item else { return }
@@ -150,15 +147,15 @@ struct AssistantView: View {
                     .font(.headline)
                 HStack(spacing: 10) {
                     Button {
-                        showCamera = true
+                        showLiveCamera = true
                     } label: {
-                        actionLabel("拍照识牌", icon: "camera.fill")
+                        actionLabel("离线实时", icon: "viewfinder")
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(store.isAnalyzing || !UIImagePickerController.isSourceTypeAvailable(.camera))
+                    .disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
 
                     PhotosPicker(selection: $photoItem, matching: .images) {
-                        actionLabel("相册", icon: "photo")
+                        actionLabel("在线相册", icon: "photo")
                     }
                     .buttonStyle(.bordered)
                     .disabled(store.isAnalyzing)
@@ -179,7 +176,7 @@ struct AssistantView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                Text("照片识别需在设置页填写局域网后端；手动录牌和本地牌效不依赖网络。")
+                Text("“离线实时”不会上传画面；横屏时会直接框选麻将并标出建议打牌。在线相册仅作为备用。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

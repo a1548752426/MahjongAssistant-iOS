@@ -26,29 +26,29 @@ struct SettingsView: View {
                     LabeledContent("状态", value: store.connectionStatus)
                         .foregroundStyle(connectionColor)
                 } header: {
-                    Text("照片识别后端")
+                    Text("备用在线照片识别")
                 } footer: {
-                    Text("填写运行参考项目 FastAPI 服务的电脑局域网地址。iPhone 与电脑需在同一 Wi‑Fi；例如 http://192.168.1.100:8000。")
+                    Text("离线实时摄像头不使用这里的地址。只有选择“在线相册”时才会把照片发送到该 FastAPI 服务。")
                 }
 
                 Section {
-                    instructionRow(number: "1", title: "横向拍摄", detail: "让所有牌完整入镜，避免反光和遮挡。")
-                    instructionRow(number: "2", title: "上下分区", detail: "照片上半部分放暗牌，下半部分放已碰/杠的副露。")
-                    instructionRow(number: "3", title: "识别后校正", detail: "点按错误的牌删除，再用“手动”补入正确牌。")
+                    instructionRow(number: "1", title: "横屏取景", detail: "让整排立牌完整入镜，避免手指遮挡和强烈反光。")
+                    instructionRow(number: "2", title: "调整黄线", detail: "立牌放在手牌区；亮出的碰/杠放到黄线另一侧。")
+                    instructionRow(number: "3", title: "看绿色牌框", detail: "稳定识别两帧后，绿色粗框和顶部文字就是建议打出的牌。")
                 } header: {
-                    Text("拍摄方式")
+                    Text("离线实时识别")
                 } footer: {
-                    Text("这是为兼容参考项目的双区域 YOLO 识别方式。")
+                    Text("模型随应用打包，视频帧在 iPhone 上处理，不需要网络。")
                 }
 
                 Section {
                     LabeledContent("应用", value: "听牌助手")
-                    LabeledContent("版本", value: "1.0.0")
+                    LabeledContent("版本", value: "1.1.0")
                     LabeledContent("最低系统", value: "iOS 16")
                     VStack(alignment: .leading, spacing: 6) {
                         Text("隐私说明")
                             .font(.subheadline.weight(.semibold))
-                        Text("手动牌局数据只保存在本机。使用照片识别时，图片只发送到你在上方配置的服务器。")
+                        Text("离线实时模式不会上传摄像头画面。只有主动选择“在线相册”时，照片才会发送到上方配置的服务器。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }

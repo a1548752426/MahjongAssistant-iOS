@@ -279,6 +279,39 @@ final class GameStore: ObservableObject {
         }
     }
 
+    @discardableResult
+    func applyLiveRecognition(
+        hand: [MahjongTile],
+        exposedTiles: [MahjongTile]
+    ) -> Bool {
+        guard !hand.isEmpty else {
+            notice = "请让整排立牌进入取景框"
+            return false
+        }
+        let recognizedMelds = inferMelds(from: exposedTiles)
+        guard isPhysicallyValid(hand: hand, melds: recognizedMelds) else {
+            notice = "实时识别中有同牌超过四张，请调整角度"
+            return false
+        }
+
+        let sortedHand = hand.sorted()
+        let sameHand = sortedHand == concealed
+        let oldMeldSignature = melds.map { "\($0.kind.rawValue):\($0.tiles.map(\.index))" }
+        let newMeldSignature = recognizedMelds.map { "\($0.kind.rawValue):\($0.tiles.map(\.index))" }
+        guard !sameHand || oldMeldSignature != newMeldSignature else { return true }
+
+        concealed = sortedHand
+        melds = recognizedMelds
+        serverSuggestion = nil
+        lastIncoming = nil
+        opportunities = []
+        if isReady, currentShanten != 0 {
+            isReady = false
+        }
+        notice = "离线实时识别已同步"
+        return true
+    }
+
     func endSession() async {
         guard isSessionActive else {
             clearHand()

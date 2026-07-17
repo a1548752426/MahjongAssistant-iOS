@@ -24,6 +24,9 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate --spec project.yml
 
+      - name: Install ONNX Runtime
+        run: pod install --repo-update
+
       - name: Run unit tests
         shell: bash
         run: |
@@ -33,7 +36,7 @@ jobs:
             python3 -c 'import json,sys; d=json.load(sys.stdin)["devices"]; print(next(x["udid"] for runtime in d.values() for x in runtime if x["name"].startswith("iPhone")))'
           )"
           xcodebuild \
-            -project MahjongAssistant.xcodeproj \
+            -workspace MahjongAssistant.xcworkspace \
             -scheme MahjongAssistant \
             -configuration Debug \
             -sdk iphonesimulator \
@@ -50,4 +53,3 @@ jobs:
           path: build/MahjongAssistant-unsigned.ipa
           if-no-files-found: error
           retention-days: 30
-

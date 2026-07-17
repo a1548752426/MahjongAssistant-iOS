@@ -5,6 +5,7 @@ DerivedData/
 *.xcuserstate
 xcuserdata/
 MahjongAssistant.xcodeproj/
+MahjongAssistant.xcworkspace/
+Pods/
 .reference/
 *.ipa
-

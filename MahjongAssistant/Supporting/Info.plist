@@ -30,7 +30,7 @@
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>用于拍摄麻将手牌并发送到你配置的本地识别服务。</string>
+	<string>用于在设备上实时识别麻将牌并叠加出牌建议；实时画面不会上传。</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>用于连接同一局域网内的麻将识别服务。</string>
 	<key>NSPhotoLibraryUsageDescription</key>
@@ -40,6 +40,8 @@
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>

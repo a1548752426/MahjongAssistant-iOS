@@ -9,12 +9,18 @@ if ! command -v xcodegen >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v pod >/dev/null 2>&1; then
+  echo "CocoaPods is required. Install it with: sudo gem install cocoapods" >&2
+  exit 1
+fi
+
 xcodegen generate --spec project.yml
+pod install
 
 rm -rf build/DerivedData build/Payload build/MahjongAssistant-unsigned.ipa
 
 xcodebuild \
-  -project MahjongAssistant.xcodeproj \
+  -workspace MahjongAssistant.xcworkspace \
   -scheme MahjongAssistant \
   -configuration Release \
   -sdk iphoneos \
@@ -38,4 +44,3 @@ cp -R "$APP_PATH" build/Payload/
 )
 
 echo "Created: $ROOT_DIR/build/MahjongAssistant-unsigned.ipa"
-

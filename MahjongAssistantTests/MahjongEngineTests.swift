@@ -106,6 +106,21 @@ final class MahjongEngineTests: XCTestCase {
         XCTAssertNil(actions.first(where: { $0.kind == .chi }))
     }
 
+    func testOnDeviceModelLabelsMapToLocalTiles() {
+        XCTAssertEqual(OnDeviceMahjongDetector.tile(for: "1C")?.code, "1m")
+        XCTAssertEqual(OnDeviceMahjongDetector.tile(for: "9D")?.code, "9p")
+        XCTAssertEqual(OnDeviceMahjongDetector.tile(for: "5B")?.code, "5s")
+        XCTAssertEqual(OnDeviceMahjongDetector.tile(for: "EW")?.code, "1z")
+        XCTAssertEqual(OnDeviceMahjongDetector.tile(for: "SW")?.code, "2z")
+        XCTAssertEqual(OnDeviceMahjongDetector.tile(for: "WW")?.code, "3z")
+        XCTAssertEqual(OnDeviceMahjongDetector.tile(for: "NW")?.code, "4z")
+        XCTAssertEqual(OnDeviceMahjongDetector.tile(for: "WD")?.code, "5z")
+        XCTAssertEqual(OnDeviceMahjongDetector.tile(for: "GD")?.code, "6z")
+        XCTAssertEqual(OnDeviceMahjongDetector.tile(for: "RD")?.code, "7z")
+        XCTAssertNil(OnDeviceMahjongDetector.tile(for: "1F"))
+        XCTAssertNil(OnDeviceMahjongDetector.tile(for: "1S"))
+    }
+
     private func parse(_ notation: String) -> [Int] {
         var counts = Array(repeating: 0, count: 34)
         var digits: [Character] = []

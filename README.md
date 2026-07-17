@@ -1,10 +1,14 @@
 # 听牌助手（iOS）
 
-一个原生 SwiftUI 麻将牌效助手，目标安装方式为 LiveContainer。应用可以离线手动录牌并计算向听、进张、切牌建议；照片识别通过局域网连接参考项目的 FastAPI/YOLO 后端。
+一个原生 SwiftUI 麻将牌效助手，目标安装方式为 LiveContainer。应用把 YOLO 模型打包在 IPA 内，能直接打开摄像头离线实时识牌、计算牌效，并把建议打出的牌标在画面上。
 
 ## 已实现
 
-- iPhone 相机、相册识牌，以及识别后的逐张人工校正
+- iPhone 摄像头离线实时识牌，不上传视频画面
+- 识别框、置信度和建议打牌绿色粗框实时叠加
+- 可调手牌/副露分界线，支持碰、杠牌放在立牌上方或前方
+- Core ML 执行后端优先使用 Apple 神经引擎/GPU，CPU 自动兜底
+- 在线相册识别保留为 FastAPI 备用方式
 - 标准四面子一将、七对、十三幺的向听与和牌判断
 - 按“向听优先、进张数次优”排序切牌
 - 对方出牌后的胡、碰、杠、吃判断
@@ -14,17 +18,17 @@
 - 与参考项目的 `/api/start-session`、`/api/analyze-hand`、`/api/end-session` 接口兼容
 - GitHub Actions 自动测试并生成未签名 IPA
 
-## 照片识别
+## 离线实时识别
 
-参考项目由 Android 客户端和 Python 后端组成。其仓库未声明开源许可证，因此本工程没有复制或分发其中的源码、模型或素材，只实现了兼容客户端。
+1. 点击首页的“离线实时”，建议把 iPhone 横过来使用。
+2. 让整排立牌进入画面，避免遮挡和强烈反光。
+3. 把亮出的碰/杠牌放在立牌上方或前方。
+4. 拖动黄色分界线，让立牌和副露分别位于线的两侧；如果摆放方向相反，可点击“副露在上/下”切换。
+5. 连续两帧识别稳定后，应用会同步本地牌局；绿色粗框和顶部文字表示建议打出的牌。
 
-1. 在电脑上单独运行[参考项目](https://github.com/LYiHub/AR-Mahjong-Assistant-preview)的 FastAPI 服务。
-2. 保证 iPhone 和电脑连接同一局域网。
-3. 在应用“设置”中填入电脑地址，例如 `http://192.168.1.100:8000`。
-4. 横向拍照：上半部分放暗牌，下半部分放碰/杠后的副露。
-5. 识别完成后点按错牌删除，再用“手动”补牌。
+实时推理会自动丢弃来不及处理的旧视频帧，并限制推理频率，以控制延迟和发热。在线相册仍与参考项目的 `/api/start-session`、`/api/analyze-hand`、`/api/end-session` 接口兼容。
 
-没有后端时，手动录牌和全部本地牌效功能仍可使用。
+离线模型来源和再分发注意事项见 [`THIRD_PARTY_MODEL_NOTICE.md`](THIRD_PARTY_MODEL_NOTICE.md)。参考仓库没有声明许可证，公开分发 IPA 前应先向上游作者确认授权。
 
 ## 生成未签名 IPA
 
@@ -40,10 +44,11 @@ MahjongAssistant-unsigned.ipa
 
 ### macOS 本地构建
 
-需要 Xcode 16 和 XcodeGen：
+需要 Xcode 16、XcodeGen 和 CocoaPods：
 
 ```bash
 brew install xcodegen
+sudo gem install cocoapods
 bash scripts/build-unsigned-ipa.sh
 ```
 
@@ -55,7 +60,8 @@ bash scripts/build-unsigned-ipa.sh
 
 ```bash
 xcodegen generate --spec project.yml
-open MahjongAssistant.xcodeproj
+pod install
+open MahjongAssistant.xcworkspace
 ```
 
 运行不依赖 Xcode 的结构检查：
@@ -64,5 +70,4 @@ open MahjongAssistant.xcodeproj
 python tools/verify_project.py
 ```
 
-最低系统为 iOS 16，无第三方 iOS 依赖。
-
+最低系统为 iOS 16。离线推理使用微软 `onnxruntime-objc` 1.22.0。
