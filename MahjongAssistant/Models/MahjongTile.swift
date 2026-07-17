@@ -115,7 +115,7 @@ struct MahjongTile: Identifiable, Hashable, Codable, Comparable {
 
 extension Array where Element == MahjongTile {
     var tileCounts: [Int] {
-        reduce(into: Array(repeating: 0, count: 34)) { result, tile in
+        reduce(into: Swift.Array<Int>(repeating: 0, count: 34)) { result, tile in
             guard result.indices.contains(tile.index) else { return }
             result[tile.index] += 1
         }
