@@ -21,8 +21,11 @@ struct CameraPreview: UIViewRepresentable {
 
     func makeUIView(context: Context) -> CameraPreviewUIView {
         let view = CameraPreviewUIView()
+        view.backgroundColor = .black
         view.previewLayer.session = session
-        view.previewLayer.videoGravity = .resizeAspectFill
+        // Keep the entire video frame visible so model coordinates map 1:1 to
+        // the overlay without hidden aspect-fill cropping.
+        view.previewLayer.videoGravity = .resizeAspect
         view.previewLayer.connection?.videoOrientation = orientation
         return view
     }
@@ -164,9 +167,17 @@ private enum CameraCaptureError: LocalizedError {
 
 extension AVCaptureVideoOrientation {
     static func current(for size: CGSize) -> AVCaptureVideoOrientation {
-        if size.width > size.height {
+        switch UIDevice.current.orientation {
+        case .landscapeLeft:
             return .landscapeRight
+        case .landscapeRight:
+            return .landscapeLeft
+        case .portraitUpsideDown:
+            return .portraitUpsideDown
+        case .portrait:
+            return .portrait
+        default:
+            return size.width > size.height ? .landscapeRight : .portrait
         }
-        return .portrait
     }
 }

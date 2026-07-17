@@ -282,33 +282,52 @@ final class GameStore: ObservableObject {
     @discardableResult
     func applyLiveRecognition(
         hand: [MahjongTile],
-        exposedTiles: [MahjongTile]
+        exposedTiles: [MahjongTile],
+        discardedTiles: [MahjongTile],
+        inferCoveredKans: Bool
     ) -> Bool {
         guard !hand.isEmpty else {
             notice = "请让整排立牌进入取景框"
             return false
         }
-        let recognizedMelds = inferMelds(from: exposedTiles)
-        guard isPhysicallyValid(hand: hand, melds: recognizedMelds) else {
+        let recognizedMelds = inferMelds(
+            from: exposedTiles,
+            inferCoveredKans: inferCoveredKans
+        )
+        guard isPhysicallyValid(
+            hand: hand,
+            melds: recognizedMelds,
+            discarded: discardedTiles
+        ) else {
             notice = "实时识别中有同牌超过四张，请调整角度"
             return false
         }
 
         let sortedHand = hand.sorted()
         let sameHand = sortedHand == concealed
+        let recognizedSeenCounts = discardedTiles.tileCounts
+        let sameDiscards = recognizedSeenCounts == seenCounts
         let oldMeldSignature = melds.map { "\($0.kind.rawValue):\($0.tiles.map(\.index))" }
         let newMeldSignature = recognizedMelds.map { "\($0.kind.rawValue):\($0.tiles.map(\.index))" }
-        guard !sameHand || oldMeldSignature != newMeldSignature else { return true }
+        guard !sameHand || !sameDiscards || oldMeldSignature != newMeldSignature else {
+            return true
+        }
 
         concealed = sortedHand
         melds = recognizedMelds
+        seenCounts = recognizedSeenCounts
         serverSuggestion = nil
         lastIncoming = nil
         opportunities = []
         if isReady, currentShanten != 0 {
             isReady = false
         }
-        notice = "离线实时识别已同步"
+        let inferredKanCount = inferCoveredKans
+            ? exposedTiles.tileCounts.filter { $0 == 2 }.count
+            : 0
+        notice = inferredKanCount > 0
+            ? "已同步；按两张同牌推断 \(inferredKanCount) 组盖牌暗杠"
+            : "离线实时识别已同步"
         return true
     }
 
@@ -348,7 +367,10 @@ final class GameStore: ObservableObject {
         }
     }
 
-    private func inferMelds(from tiles: [MahjongTile]) -> [Meld] {
+    private func inferMelds(
+        from tiles: [MahjongTile],
+        inferCoveredKans: Bool = false
+    ) -> [Meld] {
         var remaining = tiles.tileCounts
         var result: [Meld] = []
 
@@ -357,6 +379,18 @@ final class GameStore: ObservableObject {
             let kind: MeldKind = count == 4 ? .kan : .pon
             result.append(Meld(kind: kind, tiles: Array(repeating: MahjongTile(index: index), count: count)))
             remaining[index] -= count
+        }
+
+        if inferCoveredKans {
+            for index in 0..<34 where remaining[index] == 2 {
+                result.append(
+                    Meld(
+                        kind: .kan,
+                        tiles: Array(repeating: MahjongTile(index: index), count: 4)
+                    )
+                )
+                remaining[index] = 0
+            }
         }
 
         if rules.allowChi {
@@ -373,8 +407,12 @@ final class GameStore: ObservableObject {
         return result
     }
 
-    private func isPhysicallyValid(hand: [MahjongTile], melds: [Meld]) -> Bool {
-        let combined = (hand + melds.flatMap(\.tiles)).tileCounts
+    private func isPhysicallyValid(
+        hand: [MahjongTile],
+        melds: [Meld],
+        discarded: [MahjongTile] = []
+    ) -> Bool {
+        let combined = (hand + melds.flatMap(\.tiles) + discarded).tileCounts
         return combined.allSatisfy { $0 <= 4 }
     }
 

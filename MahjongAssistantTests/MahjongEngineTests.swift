@@ -121,6 +121,29 @@ final class MahjongEngineTests: XCTestCase {
         XCTAssertNil(OnDeviceMahjongDetector.tile(for: "1S"))
     }
 
+    @MainActor
+    func testLiveRecognitionTracksGlobalDiscardsAndInfersCoveredKan() {
+        let store = GameStore()
+        let hand = ["1m", "2m", "4m", "5m", "6m", "7p", "8p", "9p", "1s", "2s"]
+            .compactMap(MahjongTile.parse)
+        let exposed = ["3m", "3m"].compactMap(MahjongTile.parse)
+        let discarded = ["1z", "2z", "2z"].compactMap(MahjongTile.parse)
+
+        XCTAssertTrue(
+            store.applyLiveRecognition(
+                hand: hand,
+                exposedTiles: exposed,
+                discardedTiles: discarded,
+                inferCoveredKans: true
+            )
+        )
+        XCTAssertEqual(store.melds.count, 1)
+        XCTAssertEqual(store.melds.first?.kind, .kan)
+        XCTAssertEqual(store.melds.first?.tiles.map(\.code), ["3m", "3m", "3m", "3m"])
+        XCTAssertEqual(store.seenCounts[MahjongTile.parse("1z")!.index], 1)
+        XCTAssertEqual(store.seenCounts[MahjongTile.parse("2z")!.index], 2)
+    }
+
     private func parse(_ notation: String) -> [Int] {
         var counts = Array(repeating: 0, count: 34)
         var digits: [Character] = []

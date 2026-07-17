@@ -46,7 +46,8 @@ final class OnDeviceMahjongDetector {
         let scale: CGFloat
         let paddingX: CGFloat
         let paddingY: CGFloat
-        let sourceSize: CGSize
+        let frameSize: CGSize
+        let cropOrigin: CGPoint
     }
 
     private struct Candidate {
@@ -98,36 +99,46 @@ final class OnDeviceMahjongDetector {
         )
     }
 
-    func detect(pixelBuffer: CVPixelBuffer) throws -> MahjongInferenceResult {
-        let letterbox = try makeInput(from: pixelBuffer)
-        let input = try ORTValue(
-            tensorData: letterbox.tensor,
-            elementType: .float,
-            shape: [1, 3, inputSize, inputSize].map { NSNumber(value: $0) }
+    func detect(
+        pixelBuffer: CVPixelBuffer,
+        regions: [CGRect] = [CGRect(x: 0, y: 0, width: 1, height: 1)]
+    ) throws -> MahjongInferenceResult {
+        let started = CFAbsoluteTimeGetCurrent()
+        var allCandidates: [Candidate] = []
+        var frameSize = CGSize(
+            width: CVPixelBufferGetWidth(pixelBuffer),
+            height: CVPixelBufferGetHeight(pixelBuffer)
         )
 
-        let started = CFAbsoluteTimeGetCurrent()
-        let outputs = try session.run(
-            withInputs: ["images": input],
-            outputNames: ["output0"],
-            runOptions: nil
-        )
+        for region in regions {
+            let letterbox = try makeInput(from: pixelBuffer, region: region)
+            frameSize = letterbox.frameSize
+            let input = try ORTValue(
+                tensorData: letterbox.tensor,
+                elementType: .float,
+                shape: [1, 3, inputSize, inputSize].map { NSNumber(value: $0) }
+            )
+            let outputs = try session.run(
+                withInputs: ["images": input],
+                outputNames: ["output0"],
+                runOptions: nil
+            )
+            guard let output = outputs["output0"] else {
+                throw OnDeviceDetectorError.invalidOutput
+            }
+            let rawData = try output.tensorData() as Data
+            let values = rawData.withUnsafeBytes { rawBuffer -> [Float] in
+                Array(rawBuffer.bindMemory(to: Float.self))
+            }
+            guard values.count >= (labels.count + 4) * anchorCount else {
+                throw OnDeviceDetectorError.invalidOutput
+            }
+            allCandidates.append(contentsOf: decode(values, letterbox: letterbox))
+        }
         let elapsed = (CFAbsoluteTimeGetCurrent() - started) * 1_000
 
-        guard let output = outputs["output0"] else {
-            throw OnDeviceDetectorError.invalidOutput
-        }
-        let rawData = try output.tensorData() as Data
-        let values = rawData.withUnsafeBytes { rawBuffer -> [Float] in
-            Array(rawBuffer.bindMemory(to: Float.self))
-        }
-        guard values.count >= (labels.count + 4) * anchorCount else {
-            throw OnDeviceDetectorError.invalidOutput
-        }
-
-        let candidates = decode(values, letterbox: letterbox)
-        let detections = nonMaximumSuppression(candidates)
-            .prefix(24)
+        let detections = nonMaximumSuppression(allCandidates)
+            .prefix(80)
             .map {
                 MahjongDetection(
                     label: $0.label,
@@ -139,21 +150,35 @@ final class OnDeviceMahjongDetector {
 
         return MahjongInferenceResult(
             detections: detections,
-            sourceSize: letterbox.sourceSize,
+            sourceSize: frameSize,
             inferenceMilliseconds: elapsed
         )
     }
 
-    private func makeInput(from pixelBuffer: CVPixelBuffer) throws -> Letterbox {
+    private func makeInput(
+        from pixelBuffer: CVPixelBuffer,
+        region: CGRect
+    ) throws -> Letterbox {
         guard CVPixelBufferGetPixelFormatType(pixelBuffer) == kCVPixelFormatType_32BGRA else {
             throw OnDeviceDetectorError.unsupportedPixelFormat
         }
 
-        let sourceWidth = CVPixelBufferGetWidth(pixelBuffer)
-        let sourceHeight = CVPixelBufferGetHeight(pixelBuffer)
-        guard sourceWidth > 0, sourceHeight > 0 else {
+        let frameWidth = CVPixelBufferGetWidth(pixelBuffer)
+        let frameHeight = CVPixelBufferGetHeight(pixelBuffer)
+        guard frameWidth > 0, frameHeight > 0 else {
             throw OnDeviceDetectorError.preprocessingFailed
         }
+        let unit = CGRect(x: 0, y: 0, width: 1, height: 1)
+        let clipped = region.standardized.intersection(unit)
+        guard !clipped.isNull, clipped.width > 0.05, clipped.height > 0.05 else {
+            throw OnDeviceDetectorError.preprocessingFailed
+        }
+        let cropX = max(0, min(frameWidth - 1, Int(floor(clipped.minX * CGFloat(frameWidth)))))
+        let cropY = max(0, min(frameHeight - 1, Int(floor(clipped.minY * CGFloat(frameHeight)))))
+        let cropMaxX = max(cropX + 1, min(frameWidth, Int(ceil(clipped.maxX * CGFloat(frameWidth)))))
+        let cropMaxY = max(cropY + 1, min(frameHeight, Int(ceil(clipped.maxY * CGFloat(frameHeight)))))
+        let sourceWidth = cropMaxX - cropX
+        let sourceHeight = cropMaxY - cropY
 
         let scale = min(
             CGFloat(inputSize) / CGFloat(sourceWidth),
@@ -178,7 +203,9 @@ final class OnDeviceMahjongDetector {
                 return kvImageNullPointerArgument
             }
             var source = vImage_Buffer(
-                data: sourceAddress,
+                data: sourceAddress.advanced(
+                    by: cropY * CVPixelBufferGetBytesPerRow(pixelBuffer) + cropX * 4
+                ),
                 height: vImagePixelCount(sourceHeight),
                 width: vImagePixelCount(sourceWidth),
                 rowBytes: CVPixelBufferGetBytesPerRow(pixelBuffer)
@@ -221,14 +248,15 @@ final class OnDeviceMahjongDetector {
             scale: scale,
             paddingX: paddingX,
             paddingY: paddingY,
-            sourceSize: CGSize(width: sourceWidth, height: sourceHeight)
+            frameSize: CGSize(width: frameWidth, height: frameHeight),
+            cropOrigin: CGPoint(x: cropX, y: cropY)
         )
     }
 
     private func decode(_ output: [Float], letterbox: Letterbox) -> [Candidate] {
         var result: [Candidate] = []
-        let sourceWidth = letterbox.sourceSize.width
-        let sourceHeight = letterbox.sourceSize.height
+        let frameWidth = letterbox.frameSize.width
+        let frameHeight = letterbox.frameSize.height
 
         for anchor in 0..<anchorCount {
             var bestClass = 0
@@ -255,11 +283,19 @@ final class OnDeviceMahjongDetector {
             let maxX = ((centerX + width / 2) - letterbox.paddingX) / letterbox.scale
             let maxY = ((centerY + height / 2) - letterbox.paddingY) / letterbox.scale
 
+            let globalMinX = letterbox.cropOrigin.x + minX
+            let globalMinY = letterbox.cropOrigin.y + minY
+            let globalMaxX = letterbox.cropOrigin.x + maxX
+            let globalMaxY = letterbox.cropOrigin.y + maxY
+            let normalizedMinX = max(0, min(1, globalMinX / frameWidth))
+            let normalizedMinY = max(0, min(1, globalMinY / frameHeight))
+            let normalizedMaxX = max(0, min(1, globalMaxX / frameWidth))
+            let normalizedMaxY = max(0, min(1, globalMaxY / frameHeight))
             let normalized = CGRect(
-                x: max(0, min(1, minX / sourceWidth)),
-                y: max(0, min(1, minY / sourceHeight)),
-                width: max(0, min(1, maxX / sourceWidth) - max(0, min(1, minX / sourceWidth))),
-                height: max(0, min(1, maxY / sourceHeight) - max(0, min(1, minY / sourceHeight)))
+                x: normalizedMinX,
+                y: normalizedMinY,
+                width: max(0, normalizedMaxX - normalizedMinX),
+                height: max(0, normalizedMaxY - normalizedMinY)
             )
             guard normalized.width > 0.005, normalized.height > 0.005 else { continue }
             result.append(

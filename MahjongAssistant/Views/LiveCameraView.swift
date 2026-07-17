@@ -4,6 +4,7 @@ import SwiftUI
 struct LiveCameraView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: LiveCameraViewModel
+    @State private var showCoveredKanPicker = false
 
     init(store: GameStore) {
         _viewModel = StateObject(wrappedValue: LiveCameraViewModel(store: store))
@@ -19,17 +20,16 @@ struct LiveCameraView: View {
                     session: viewModel.camera.session,
                     orientation: orientation
                 )
-                .ignoresSafeArea()
 
                 DetectionOverlay(
                     detections: viewModel.detections,
                     sourceSize: viewModel.sourceSize,
                     viewSize: geometry.size,
-                    dividerPosition: viewModel.dividerPosition,
-                    meldsAreAbove: viewModel.meldsAreAbove,
+                    tableDividerPosition: viewModel.tableDividerPosition,
+                    meldAreaWidth: viewModel.meldAreaWidth,
+                    meldsOnRight: viewModel.meldsOnRight,
                     suggestedTile: viewModel.suggestedTile
                 )
-                .ignoresSafeArea()
 
                 controls(isPortrait: geometry.size.height > geometry.size.width)
             }
@@ -43,8 +43,17 @@ struct LiveCameraView: View {
                 viewModel.update(viewSize: newSize)
             }
         }
+        .ignoresSafeArea()
         .persistentSystemOverlays(.hidden)
         .statusBarHidden()
+        .sheet(isPresented: $showCoveredKanPicker) {
+            TilePickerView(
+                title: "选择全盖／漏识别的暗杠",
+                dismissAfterSelection: true,
+                unavailableCount: { viewModel.coveredKanUnavailableCount(for: $0) },
+                onSelect: { viewModel.addManualCoveredKan($0) }
+            )
+        }
     }
 
     private func controls(isPortrait: Bool) -> some View {
@@ -70,7 +79,7 @@ struct LiveCameraView: View {
                             .lineLimit(2)
                     }
                     Text(
-                        "手牌 \(viewModel.recognizedHand.count) · 副露牌 \(viewModel.recognizedExposed.count)"
+                        "手牌 \(viewModel.recognizedHand.count) · 副露明牌 \(viewModel.recognizedExposed.count) · 全局弃牌 \(viewModel.recognizedDiscarded.count)"
                     )
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.82))
@@ -109,12 +118,12 @@ struct LiveCameraView: View {
             VStack(spacing: 9) {
                 HStack {
                     Label(
-                        viewModel.meldsAreAbove ? "分界线上方＝碰／杠" : "分界线下方＝碰／杠",
-                        systemImage: "rectangle.split.1x2"
+                        "上方＝全局弃牌，下方＝手牌＋副露",
+                        systemImage: "rectangle.split.2x1"
                     )
                     .font(.subheadline.weight(.semibold))
                     Spacer()
-                    Button(viewModel.meldsAreAbove ? "副露在下" : "副露在上") {
+                    Button(viewModel.meldsOnRight ? "副露改左边" : "副露改右边") {
                         viewModel.toggleMeldSide()
                     }
                     .buttonStyle(.bordered)
@@ -123,21 +132,67 @@ struct LiveCameraView: View {
                 }
 
                 HStack(spacing: 10) {
-                    Text("上")
+                    Text("弃牌区")
                     Slider(
-                        value: $viewModel.dividerPosition,
-                        in: 0.22...0.78,
+                        value: $viewModel.tableDividerPosition,
+                        in: 0.38...0.76,
                         step: 0.01
                     )
                     .tint(.yellow)
-                    .onChange(of: viewModel.dividerPosition) { _ in
-                        viewModel.dividerDidChange()
+                    .onChange(of: viewModel.tableDividerPosition) { _ in
+                        viewModel.zonesDidChange()
                     }
-                    Text("下")
+                    Text("手牌区")
                 }
                 .font(.caption.bold())
 
-                Text("拖动黄线：立牌放在手牌区，亮出的碰／杠放在另一侧")
+                HStack(spacing: 10) {
+                    Text("副露宽度")
+                    Slider(
+                        value: $viewModel.meldAreaWidth,
+                        in: 0.16...0.46,
+                        step: 0.01
+                    )
+                    .tint(.orange)
+                    .onChange(of: viewModel.meldAreaWidth) { _ in
+                        viewModel.zonesDidChange()
+                    }
+                    Toggle("盖牌暗杠", isOn: $viewModel.inferCoveredKans)
+                        .labelsHidden()
+                        .tint(.orange)
+                        .onChange(of: viewModel.inferCoveredKans) { _ in
+                            viewModel.coveredKanSettingDidChange()
+                        }
+                    Text("盖牌暗杠")
+                    Button("全盖暗杠＋") {
+                        showCoveredKanPicker = true
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.white)
+                    .controlSize(.small)
+                }
+                .font(.caption.bold())
+
+                if !viewModel.manualCoveredKans.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 7) {
+                            Text("手动暗杠")
+                                .font(.caption.bold())
+                            ForEach(viewModel.manualCoveredKans) { tile in
+                                Button {
+                                    viewModel.removeManualCoveredKan(tile)
+                                } label: {
+                                    Label(tile.shortName, systemImage: "xmark.circle.fill")
+                                }
+                                .buttonStyle(.bordered)
+                                .tint(.orange)
+                                .controlSize(.mini)
+                            }
+                        }
+                    }
+                }
+
+                Text("紫框统计全局弃牌；右侧橙框为副露。副露仅露出两张相同牌时，默认按四张暗杠补全。")
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.78))
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -155,30 +210,63 @@ private struct DetectionOverlay: View {
     let detections: [MahjongDetection]
     let sourceSize: CGSize
     let viewSize: CGSize
-    let dividerPosition: CGFloat
-    let meldsAreAbove: Bool
+    let tableDividerPosition: CGFloat
+    let meldAreaWidth: CGFloat
+    let meldsOnRight: Bool
     let suggestedTile: MahjongTile?
 
     var body: some View {
-        let transform = AspectFillTransform(source: sourceSize, destination: viewSize)
+        let transform = AspectFitTransform(source: sourceSize, destination: viewSize)
         ZStack(alignment: .topLeading) {
-            let dividerY = transform.y(forNormalized: dividerPosition)
+            let dividerY = transform.y(forNormalized: tableDividerPosition)
+            let meldDividerX = transform.x(
+                forNormalized: meldsOnRight ? 1 - meldAreaWidth : meldAreaWidth
+            )
             Path { path in
-                path.move(to: CGPoint(x: 0, y: dividerY))
-                path.addLine(to: CGPoint(x: viewSize.width, y: dividerY))
+                path.move(to: CGPoint(x: transform.x(forNormalized: 0), y: dividerY))
+                path.addLine(to: CGPoint(x: transform.x(forNormalized: 1), y: dividerY))
             }
             .stroke(
                 Color.yellow.opacity(0.9),
                 style: StrokeStyle(lineWidth: 2, dash: [8, 6])
             )
 
-            Text(meldsAreAbove ? "碰／杠区" : "手牌区")
+            Path { path in
+                path.move(to: CGPoint(x: meldDividerX, y: dividerY))
+                path.addLine(
+                    to: CGPoint(x: meldDividerX, y: transform.y(forNormalized: 1))
+                )
+            }
+            .stroke(
+                Color.orange.opacity(0.95),
+                style: StrokeStyle(lineWidth: 2, dash: [7, 5])
+            )
+
+            Text("全局弃牌区")
                 .font(.caption.bold())
-                .foregroundStyle(.black)
+                .foregroundStyle(.white)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(.yellow, in: Capsule())
-                .position(x: 48, y: max(15, dividerY - 15))
+                .background(.purple.opacity(0.9), in: Capsule())
+                .position(
+                    x: transform.x(forNormalized: 0.09),
+                    y: max(15, dividerY - 15)
+                )
+
+            Text(meldsOnRight ? "右侧副露区" : "左侧副露区")
+                .font(.caption.bold())
+                .foregroundStyle(.white)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(.orange.opacity(0.9), in: Capsule())
+                .position(
+                    x: transform.x(
+                        forNormalized: meldsOnRight
+                            ? 1 - meldAreaWidth / 2
+                            : meldAreaWidth / 2
+                    ),
+                    y: dividerY + 15
+                )
 
             ForEach(detections) { detection in
                 detectionBox(detection, transform: transform)
@@ -192,14 +280,17 @@ private struct DetectionOverlay: View {
     @ViewBuilder
     private func detectionBox(
         _ detection: MahjongDetection,
-        transform: AspectFillTransform
+        transform: AspectFitTransform
     ) -> some View {
         let box = transform.rect(forNormalized: detection.rect)
-        let isExposed = meldsAreAbove
-            ? detection.rect.midY < dividerPosition
-            : detection.rect.midY > dividerPosition
-        let isSuggested = !isExposed && detection.tile == suggestedTile
-        let color: Color = isSuggested ? .green : (isExposed ? .orange : .cyan)
+        let zone = zone(for: detection)
+        let isSuggested = zone == .hand && detection.tile == suggestedTile
+        let color: Color
+        switch zone {
+        case .discard: color = .purple
+        case .meld: color = .orange
+        case .hand: color = isSuggested ? .green : .cyan
+        }
 
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 7)
@@ -228,9 +319,25 @@ private struct DetectionOverlay: View {
         .frame(width: max(30, box.width), height: max(30, box.height))
         .position(x: box.midX, y: box.midY)
     }
+
+    private enum Zone {
+        case discard
+        case hand
+        case meld
+    }
+
+    private func zone(for detection: MahjongDetection) -> Zone {
+        if detection.rect.midY < tableDividerPosition {
+            return .discard
+        }
+        let isMeld = meldsOnRight
+            ? detection.rect.midX > 1 - meldAreaWidth
+            : detection.rect.midX < meldAreaWidth
+        return isMeld ? .meld : .hand
+    }
 }
 
-private struct AspectFillTransform {
+private struct AspectFitTransform {
     let source: CGSize
     let destination: CGSize
     let scale: CGFloat
@@ -242,7 +349,7 @@ private struct AspectFillTransform {
             width: max(1, source.width),
             height: max(1, source.height)
         )
-        let computedScale = max(
+        let computedScale = min(
             destination.width / safeSource.width,
             destination.height / safeSource.height
         )
@@ -264,5 +371,9 @@ private struct AspectFillTransform {
 
     func y(forNormalized value: CGFloat) -> CGFloat {
         offsetY + value * source.height * scale
+    }
+
+    func x(forNormalized value: CGFloat) -> CGFloat {
+        offsetX + value * source.width * scale
     }
 }
