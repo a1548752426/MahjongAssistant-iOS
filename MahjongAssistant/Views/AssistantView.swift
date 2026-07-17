@@ -5,9 +5,9 @@ import UIKit
 struct AssistantView: View {
     @EnvironmentObject private var store: GameStore
     @State private var showTilePicker = false
-    @State private var inputMode: GameInputMode = .addToHand
     @State private var showLiveCamera = false
     @State private var photoItem: PhotosPickerItem?
+    @State private var drawSuit: TileSuit = .characters
 
     var body: some View {
         NavigationStack {
@@ -16,10 +16,8 @@ struct AssistantView: View {
                     statusCard
                     captureCard
                     handCard
+                    drawCard
                     adviceCard
-                    if !store.opportunities.isEmpty {
-                        opportunityCard
-                    }
                     if let serverSuggestion = store.serverSuggestion, !serverSuggestion.isEmpty {
                         serverAdviceCard(serverSuggestion)
                     }
@@ -57,17 +55,10 @@ struct AssistantView: View {
             }
             .sheet(isPresented: $showTilePicker) {
                 TilePickerView(
-                    title: inputMode == .addToHand ? "手动录牌" : "对方打出的牌",
-                    dismissAfterSelection: inputMode == .opponentDiscard,
+                    title: "校正初始手牌",
+                    dismissAfterSelection: false,
                     unavailableCount: { store.unavailableCount(for: $0) },
-                    onSelect: { tile in
-                        switch inputMode {
-                        case .addToHand:
-                            store.addToHand(tile)
-                        case .opponentDiscard:
-                            store.inspectOpponentDiscard(tile)
-                        }
-                    }
+                    onSelect: { store.addToHand($0) }
                 )
             }
             .fullScreenCover(isPresented: $showLiveCamera) {
@@ -120,12 +111,12 @@ struct AssistantView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     HStack(spacing: 8) {
                         if store.rules.winRequiresReady {
-                            Button(store.isReady ? "已报听" : "报听") {
-                                store.toggleReady()
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                            .disabled(!store.isReady && shanten != 0)
+                            Label(
+                                store.isReady ? "模型：已报听" : "模型判断报听时机",
+                                systemImage: store.isReady ? "checkmark.seal.fill" : "brain.head.profile"
+                            )
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(store.isReady ? .orange : .secondary)
                         } else {
                             Label("无需报听", systemImage: "checkmark.seal")
                                 .font(.caption)
@@ -161,7 +152,6 @@ struct AssistantView: View {
                     .disabled(store.isAnalyzing)
 
                     Button {
-                        inputMode = .addToHand
                         showTilePicker = true
                     } label: {
                         actionLabel("手动", icon: "plus.square.on.square")
@@ -176,7 +166,7 @@ struct AssistantView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                Text("“离线实时”不会上传画面；横屏时会直接框选麻将并标出建议打牌。在线相册仅作为备用。")
+                Text("“离线实时”只识别自己的手牌和副露，不上传画面；进入牌局后请在下方摸牌区记录每轮摸牌。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -278,12 +268,96 @@ struct AssistantView: View {
         }
     }
 
+    private var drawCard: some View {
+        SurfaceCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Label("摸牌区", systemImage: "hand.tap.fill")
+                        .font(.headline)
+                    Spacer()
+                    if let tile = store.drawnTile {
+                        HStack(spacing: 6) {
+                            Text("本轮")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            TileView(tile: tile, compact: true)
+                            Button("撤销") {
+                                store.cancelDraw()
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.mini)
+                        }
+                    } else {
+                        Text(drawPrompt)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Picker("花色", selection: $drawSuit) {
+                    ForEach(TileSuit.allCases, id: \.self) { suit in
+                        Text(suit.title).tag(suit)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                LazyVGrid(
+                    columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 5),
+                    spacing: 7
+                ) {
+                    ForEach(MahjongTile.tiles(in: drawSuit)) { tile in
+                        let unavailable = store.unavailableCount(for: tile)
+                        Button {
+                            store.draw(tile)
+                        } label: {
+                            VStack(spacing: 3) {
+                                TileView(tile: tile, compact: true)
+                                Text(unavailable >= 4 ? "无" : "余 \(4 - unavailable)")
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(
+                            unavailable >= 4
+                                || store.drawnTile != nil
+                                || store.concealed.count % 3 != 1
+                        )
+                        .opacity(
+                            unavailable >= 4
+                                || store.drawnTile != nil
+                                || store.concealed.count % 3 != 1
+                                ? 0.42
+                                : 1
+                        )
+                    }
+                }
+
+                if !store.ownDiscards.isEmpty {
+                    Divider()
+                    VStack(alignment: .leading, spacing: 7) {
+                        Text("自己的弃牌（点击建议区“切牌”后自动记录）")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 5) {
+                                ForEach(Array(store.ownDiscards.enumerated()), id: \.offset) { _, tile in
+                                    TileView(tile: tile, compact: true)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private var adviceCard: some View {
         let shanten = store.currentShanten
         return SurfaceCard {
             VStack(alignment: .leading, spacing: 13) {
                 HStack {
-                    Label("本地牌效建议", systemImage: "sparkles")
+                    Label("胜率优先建议", systemImage: "chart.line.uptrend.xyaxis")
                         .font(.headline)
                     Spacer()
                     if shanten < 99 {
@@ -323,13 +397,21 @@ struct AssistantView: View {
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text("切 \(suggestion.tile.fullName)")
                                         .font(.subheadline.weight(.semibold))
-                                    Text("\(shantenLabel(suggestion.shanten)) · \(suggestion.effectiveCount) 张进张")
+                                    Text(
+                                        "预计胡牌率 \(Int((suggestion.winProbability * 100).rounded()))% · 未来 \(suggestion.forecastDraws) 次摸牌"
+                                    )
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(rank == 0 ? Color.red : Color.primary)
+                                    Text(
+                                        "\(shantenLabel(suggestion.shanten)) · \(suggestion.effectiveCount) 张进张"
+                                            + (suggestion.shouldDeclareReady && !store.isReady ? " · 模型建议报听" : "")
+                                    )
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
                                 Spacer()
-                                Button("切牌") {
-                                    store.discard(suggestion.tile)
+                                Button(suggestion.shouldDeclareReady && !store.isReady ? "切牌并报听" : "切牌") {
+                                    store.commitDiscardSuggestion(suggestion)
                                 }
                                 .buttonStyle(.bordered)
                                 .controlSize(.small)
@@ -339,14 +421,9 @@ struct AssistantView: View {
                     }
                 } else {
                     effectiveTilesView
-                    Button {
-                        inputMode = .opponentDiscard
-                        showTilePicker = true
-                    } label: {
-                        Label("查看别人打出的牌能否碰 / 杠 / 胡", systemImage: "arrow.down.to.line.compact")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
+                    Label("请在上方摸牌区点选本轮实际摸到的牌", systemImage: "hand.tap")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.accentColor)
                 }
             }
         }
@@ -441,6 +518,19 @@ struct AssistantView: View {
         Label(title, systemImage: icon)
             .font(.subheadline.weight(.semibold))
             .frame(maxWidth: .infinity)
+    }
+
+    private var drawPrompt: String {
+        if store.concealed.isEmpty {
+            return "先录入初始手牌"
+        }
+        if store.concealed.count % 3 == 2 {
+            return "当前待切牌"
+        }
+        if store.concealed.count % 3 == 1 {
+            return "点选本轮摸到的牌"
+        }
+        return "请先校正手牌张数"
     }
 
     private var statusColor: Color {

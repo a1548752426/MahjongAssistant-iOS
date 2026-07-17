@@ -64,29 +64,60 @@ struct MahjongEngine {
         seenCounts: [Int],
         rules: RuleSettings
     ) -> [DiscardSuggestion] {
+        let forecastDraws = 8
+        let meldCounts = melds.flatMap(\.tiles).tileCounts
         var result: [DiscardSuggestion] = []
         for index in 0..<34 where concealedCounts[index] > 0 {
             var next = concealedCounts
             next[index] -= 1
+            var projectedSeenCounts = seenCounts
+            if projectedSeenCounts.count < 34 {
+                projectedSeenCounts.append(
+                    contentsOf: Array(repeating: 0, count: 34 - projectedSeenCounts.count)
+                )
+            }
+            projectedSeenCounts[index] += 1
             let effective = effectiveTiles(
                 concealedCounts: next,
                 melds: melds,
-                seenCounts: seenCounts,
+                seenCounts: projectedSeenCounts,
                 rules: rules
+            )
+            let nextShanten = shanten(
+                concealedCounts: next,
+                openMeldCount: melds.count,
+                rules: rules
+            )
+            let totalUnknown = (0..<34).reduce(0) { partial, tileIndex in
+                let known = next[tileIndex]
+                    + meldCounts[tileIndex]
+                    + projectedSeenCounts[safe: tileIndex, or: 0]
+                return partial + max(0, 4 - known)
+            }
+            let effectiveCount = effective.reduce(0) { $0 + $1.remaining }
+            let winProbability = estimatedWinProbability(
+                shanten: nextShanten,
+                effectiveCount: effectiveCount,
+                totalUnknown: totalUnknown,
+                forecastDraws: forecastDraws
             )
             result.append(
                 DiscardSuggestion(
                     tile: MahjongTile(index: index),
-                    shanten: shanten(
-                        concealedCounts: next,
-                        openMeldCount: melds.count,
-                        rules: rules
-                    ),
-                    effectiveTiles: effective
+                    shanten: nextShanten,
+                    effectiveTiles: effective,
+                    winProbability: winProbability,
+                    forecastDraws: forecastDraws,
+                    shouldDeclareReady: rules.winRequiresReady
+                        && nextShanten == 0
+                        && effectiveCount > 0
                 )
             )
         }
         return result.sorted {
+            if abs($0.winProbability - $1.winProbability) > 0.000_001 {
+                return $0.winProbability > $1.winProbability
+            }
             if $0.shanten != $1.shanten { return $0.shanten < $1.shanten }
             if $0.effectiveCount != $1.effectiveCount { return $0.effectiveCount > $1.effectiveCount }
             return $0.tile < $1.tile
@@ -327,6 +358,60 @@ struct MahjongEngine {
 
     private func displayShanten(_ value: Int) -> String {
         value == 0 ? "听牌" : "\(value) 向听"
+    }
+
+    /// Uses only the player's known tiles. Tenpai is an exact no-replacement
+    /// hit estimate for the forecast window; earlier stages are discounted
+    /// because one or more future improvements are still required.
+    private func estimatedWinProbability(
+        shanten: Int,
+        effectiveCount: Int,
+        totalUnknown: Int,
+        forecastDraws: Int
+    ) -> Double {
+        guard shanten >= 0, effectiveCount > 0, totalUnknown > 0 else {
+            return shanten < 0 ? 1 : 0
+        }
+        let improvementProbability = hitProbability(
+            successCount: effectiveCount,
+            totalCount: totalUnknown,
+            draws: forecastDraws
+        )
+        if shanten == 0 {
+            return improvementProbability
+        }
+
+        let continuationFactor: Double
+        switch shanten {
+        case 1:
+            continuationFactor = 0.42
+        case 2:
+            continuationFactor = 0.20
+        case 3:
+            continuationFactor = 0.09
+        default:
+            continuationFactor = 0.04 * pow(0.55, Double(max(0, shanten - 4)))
+        }
+        return min(1, improvementProbability * continuationFactor)
+    }
+
+    private func hitProbability(
+        successCount: Int,
+        totalCount: Int,
+        draws: Int
+    ) -> Double {
+        let successes = min(max(0, successCount), totalCount)
+        let sampleCount = min(max(0, draws), totalCount)
+        guard successes > 0, sampleCount > 0 else { return 0 }
+
+        var missProbability = 1.0
+        for drawIndex in 0..<sampleCount {
+            let remainingTotal = totalCount - drawIndex
+            let remainingMisses = max(0, totalCount - successes - drawIndex)
+            guard remainingMisses > 0 else { return 1 }
+            missProbability *= Double(remainingMisses) / Double(remainingTotal)
+        }
+        return max(0, min(1, 1 - missProbability))
     }
 }
 

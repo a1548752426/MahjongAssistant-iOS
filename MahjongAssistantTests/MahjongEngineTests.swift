@@ -57,6 +57,13 @@ final class MahjongEngineTests: XCTestCase {
         )
         XCTAssertEqual(suggestions.first?.shanten, 0)
         XCTAssertTrue(Set(suggestions.prefix(2).map(\.tile.code)).isSubset(of: Set(["1z", "2z"])))
+        XCTAssertTrue(
+            zip(suggestions, suggestions.dropFirst()).allSatisfy { pair in
+                pair.0.winProbability >= pair.1.winProbability
+            }
+        )
+        XCTAssertTrue(suggestions.first?.shouldDeclareReady == true)
+        XCTAssertGreaterThan(suggestions.first?.winProbability ?? 0, 0)
     }
 
     func testWinRequiresReady() {
@@ -122,26 +129,49 @@ final class MahjongEngineTests: XCTestCase {
     }
 
     @MainActor
-    func testLiveRecognitionTracksGlobalDiscardsAndInfersCoveredKan() {
+    func testLiveRecognitionPreservesOwnDiscardsAndInfersCoveredKan() {
         let store = GameStore()
         let hand = ["1m", "2m", "4m", "5m", "6m", "7p", "8p", "9p", "1s", "2s"]
             .compactMap(MahjongTile.parse)
         let exposed = ["3m", "3m"].compactMap(MahjongTile.parse)
-        let discarded = ["1z", "2z", "2z"].compactMap(MahjongTile.parse)
+        let ownDiscard = MahjongTile.parse("1z")!
+        store.seenCounts[ownDiscard.index] = 1
 
         XCTAssertTrue(
             store.applyLiveRecognition(
                 hand: hand,
                 exposedTiles: exposed,
-                discardedTiles: discarded,
                 inferCoveredKans: true
             )
         )
         XCTAssertEqual(store.melds.count, 1)
         XCTAssertEqual(store.melds.first?.kind, .kan)
         XCTAssertEqual(store.melds.first?.tiles.map(\.code), ["3m", "3m", "3m", "3m"])
-        XCTAssertEqual(store.seenCounts[MahjongTile.parse("1z")!.index], 1)
-        XCTAssertEqual(store.seenCounts[MahjongTile.parse("2z")!.index], 2)
+        XCTAssertEqual(store.seenCounts[ownDiscard.index], 1)
+    }
+
+    @MainActor
+    func testDrawAndSuggestedDiscardRecordsOwnTileAndDeclaresReady() {
+        let store = GameStore()
+        store.concealed = parseTiles("123m123p123s111z2z")
+        let drawn = MahjongTile.parse("9m")!
+
+        store.draw(drawn)
+
+        XCTAssertEqual(store.drawnTile, drawn)
+        XCTAssertEqual(store.concealed.count, 14)
+        let suggestion = try! XCTUnwrap(
+            store.discardSuggestions.first(where: { $0.tile == drawn })
+        )
+        XCTAssertTrue(suggestion.shouldDeclareReady)
+
+        store.commitDiscardSuggestion(suggestion)
+
+        XCTAssertNil(store.drawnTile)
+        XCTAssertEqual(store.concealed.count, 13)
+        XCTAssertEqual(store.seenCounts[drawn.index], 1)
+        XCTAssertEqual(store.ownDiscards.map(\.code), ["9m"])
+        XCTAssertTrue(store.isReady)
     }
 
     private func parse(_ notation: String) -> [Int] {
@@ -162,5 +192,12 @@ final class MahjongEngineTests: XCTestCase {
             }
         }
         return counts
+    }
+
+    private func parseTiles(_ notation: String) -> [MahjongTile] {
+        let counts = parse(notation)
+        return (0..<34).flatMap { index in
+            Array(repeating: MahjongTile(index: index), count: counts[index])
+        }
     }
 }

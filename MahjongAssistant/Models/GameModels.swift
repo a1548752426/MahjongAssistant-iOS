@@ -38,6 +38,9 @@ struct DiscardSuggestion: Identifiable, Hashable {
     let tile: MahjongTile
     let shanten: Int
     let effectiveTiles: [EffectiveTile]
+    let winProbability: Double
+    let forecastDraws: Int
+    let shouldDeclareReady: Bool
 
     var id: Int { tile.index }
     var effectiveCount: Int { effectiveTiles.reduce(0) { $0 + $1.remaining } }

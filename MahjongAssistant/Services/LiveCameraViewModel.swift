@@ -5,14 +5,12 @@ import Foundation
 final class LiveCameraViewModel: ObservableObject {
     @Published var detections: [MahjongDetection] = []
     @Published var sourceSize = CGSize(width: 1_280, height: 720)
-    @Published var tableDividerPosition: CGFloat = 0.58
     @Published var meldAreaWidth: CGFloat = 0.28
     @Published var meldsOnRight = true
     @Published var inferCoveredKans = true
     @Published var suggestedTile: MahjongTile?
     @Published var recognizedHand: [MahjongTile] = []
     @Published var recognizedExposed: [MahjongTile] = []
-    @Published var recognizedDiscarded: [MahjongTile] = []
     @Published var inferredCoveredKanCount = 0
     @Published var manualCoveredKans: [MahjongTile] = []
     @Published var statusText = "正在载入离线模型…"
@@ -34,7 +32,8 @@ final class LiveCameraViewModel: ObservableObject {
     private var stableSignature = ""
     private var stableFrameCount = 0
     private var lastAppliedSignature = ""
-    private var recognitionSplitY: CGFloat = 0.58
+    private var recognitionMeldAreaWidth: CGFloat = 0.28
+    private var recognitionMeldsOnRight = true
     private var currentOrientation: AVCaptureVideoOrientation = .landscapeRight
     private let minimumFrameInterval: TimeInterval = 0.36
 
@@ -70,10 +69,11 @@ final class LiveCameraViewModel: ObservableObject {
 
     func zonesDidChange() {
         stateLock.lock()
-        recognitionSplitY = tableDividerPosition
+        recognitionMeldAreaWidth = meldAreaWidth
+        recognitionMeldsOnRight = meldsOnRight
         stateLock.unlock()
         resetStability()
-        statusText = "上方识别全局弃牌；\(meldsOnRight ? "右" : "左")下识别副露"
+        statusText = "\(meldsOnRight ? "右" : "左")侧橙色区域识别副露，其余区域识别手牌"
     }
 
     func toggleMeldSide() {
@@ -107,8 +107,7 @@ final class LiveCameraViewModel: ObservableObject {
     @MainActor
     func coveredKanUnavailableCount(for tile: MahjongTile) -> Int {
         if manualCoveredKans.contains(tile) { return 4 }
-        let outsideMeldCounts = (recognizedHand + recognizedDiscarded).tileCounts
-        return outsideMeldCounts[tile.index] > 0 ? 4 : 0
+        return store.unavailableCount(for: tile) > 0 ? 4 : 0
     }
 
     private func loadDetectorIfNeeded() {
@@ -153,7 +152,8 @@ final class LiveCameraViewModel: ObservableObject {
         }
         isProcessingFrame = true
         lastInferenceDate = now
-        let splitY = recognitionSplitY
+        let meldWidth = recognitionMeldAreaWidth
+        let meldsOnRight = recognitionMeldsOnRight
         stateLock.unlock()
 
         inferenceQueue.async { [weak self] in
@@ -161,14 +161,15 @@ final class LiveCameraViewModel: ObservableObject {
             let result: Result<MahjongInferenceResult, Error>
             do {
                 let overlap: CGFloat = 0.02
-                let upperHeight = min(1, splitY + overlap)
-                let lowerY = max(0, splitY - overlap)
+                let splitX = meldsOnRight ? 1 - meldWidth : meldWidth
+                let leftWidth = min(1, splitX + overlap)
+                let rightX = max(0, splitX - overlap)
                 result = .success(
                     try detector.detect(
                         pixelBuffer: pixelBuffer,
                         regions: [
-                            CGRect(x: 0, y: 0, width: 1, height: upperHeight),
-                            CGRect(x: 0, y: lowerY, width: 1, height: 1 - lowerY)
+                            CGRect(x: 0, y: 0, width: leftWidth, height: 1),
+                            CGRect(x: rightX, y: 0, width: 1 - rightX, height: 1)
                         ]
                     )
                 )
@@ -205,14 +206,6 @@ final class LiveCameraViewModel: ObservableObject {
             .filter { zone(for: $0) == .meld }
             .sorted { $0.rect.midX < $1.rect.midX }
             .map(\.tile)
-        let discarded = result.detections
-            .filter { zone(for: $0) == .discard }
-            .sorted {
-                abs($0.rect.midY - $1.rect.midY) < 0.04
-                    ? $0.rect.midX < $1.rect.midX
-                    : $0.rect.midY < $1.rect.midY
-            }
-            .map(\.tile)
         var effectiveExposed = exposed
         for tile in manualCoveredKans {
             let visibleCount = effectiveExposed.filter { $0 == tile }.count
@@ -224,7 +217,6 @@ final class LiveCameraViewModel: ObservableObject {
         }
         recognizedHand = hand
         recognizedExposed = exposed
-        recognizedDiscarded = discarded
         inferredCoveredKanCount = inferCoveredKans
             ? exposed.tileCounts.enumerated().filter {
                 $0.element == 2
@@ -237,15 +229,14 @@ final class LiveCameraViewModel: ObservableObject {
             suggestedTile = nil
             statusText = result.detections.isEmpty
                 ? "未识别到麻将牌，请靠近并减少反光"
-                : "请调整区域线，让立牌位于左／中下方手牌区"
+                : "请调整橙色区域，让立牌位于手牌区"
             resetStability()
             return
         }
 
         let signature = detectionSignature(
             hand: hand,
-            exposed: effectiveExposed,
-            discarded: discarded
+            exposed: effectiveExposed
         )
         if signature == stableSignature {
             stableFrameCount += 1
@@ -259,7 +250,6 @@ final class LiveCameraViewModel: ObservableObject {
                 if store.applyLiveRecognition(
                     hand: hand,
                     exposedTiles: effectiveExposed,
-                    discardedTiles: discarded,
                     inferCoveredKans: inferCoveredKans
                 ) {
                     lastAppliedSignature = signature
@@ -276,7 +266,8 @@ final class LiveCameraViewModel: ObservableObject {
     private func updateAdvice() {
         if let best = store.discardSuggestions.first {
             suggestedTile = best.tile
-            statusText = "建议打 \(best.tile.shortName) · \(best.effectiveCount) 张进张 · 已见 \(recognizedDiscarded.count) 张弃牌"
+            let probability = Int((best.winProbability * 100).rounded())
+            statusText = "建议打 \(best.tile.shortName) · 预计胡牌率 \(probability)%"
         } else {
             suggestedTile = nil
             let shanten = store.currentShanten
@@ -298,15 +289,11 @@ final class LiveCameraViewModel: ObservableObject {
     }
 
     private enum RecognitionZone {
-        case discard
         case hand
         case meld
     }
 
     private func zone(for detection: MahjongDetection) -> RecognitionZone {
-        if detection.rect.midY < tableDividerPosition {
-            return .discard
-        }
         let isInMeldArea = meldsOnRight
             ? detection.rect.midX > 1 - meldAreaWidth
             : detection.rect.midX < meldAreaWidth
@@ -315,20 +302,16 @@ final class LiveCameraViewModel: ObservableObject {
 
     private func detectionSignature(
         hand: [MahjongTile],
-        exposed: [MahjongTile],
-        discarded: [MahjongTile]
+        exposed: [MahjongTile]
     ) -> String {
         let handCounts = hand.tileCounts.map { String($0) }.joined()
         let exposedCounts = exposed.tileCounts.map { String($0) }.joined()
-        let discardedCounts = discarded.tileCounts.map { String($0) }.joined()
         return [
             handCounts,
             exposedCounts,
-            discardedCounts,
             String(meldsOnRight),
             String(inferCoveredKans),
             manualCoveredKans.map(\.code).joined(separator: ","),
-            String(describing: tableDividerPosition.rounded(toPlaces: 2)),
             String(describing: meldAreaWidth.rounded(toPlaces: 2))
         ].joined(separator: "|")
     }

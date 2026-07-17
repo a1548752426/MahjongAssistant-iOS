@@ -25,7 +25,6 @@ struct LiveCameraView: View {
                     detections: viewModel.detections,
                     sourceSize: viewModel.sourceSize,
                     viewSize: geometry.size,
-                    tableDividerPosition: viewModel.tableDividerPosition,
                     meldAreaWidth: viewModel.meldAreaWidth,
                     meldsOnRight: viewModel.meldsOnRight,
                     suggestedTile: viewModel.suggestedTile
@@ -79,7 +78,7 @@ struct LiveCameraView: View {
                             .lineLimit(2)
                     }
                     Text(
-                        "手牌 \(viewModel.recognizedHand.count) · 副露明牌 \(viewModel.recognizedExposed.count) · 全局弃牌 \(viewModel.recognizedDiscarded.count)"
+                        "手牌 \(viewModel.recognizedHand.count) · 副露明牌 \(viewModel.recognizedExposed.count)"
                     )
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.82))
@@ -118,8 +117,8 @@ struct LiveCameraView: View {
             VStack(spacing: 9) {
                 HStack {
                     Label(
-                        "上方＝全局弃牌，下方＝手牌＋副露",
-                        systemImage: "rectangle.split.2x1"
+                        "青框＝手牌，橙框＝副露",
+                        systemImage: "rectangle.split.3x1"
                     )
                     .font(.subheadline.weight(.semibold))
                     Spacer()
@@ -130,21 +129,6 @@ struct LiveCameraView: View {
                     .tint(.white)
                     .controlSize(.small)
                 }
-
-                HStack(spacing: 10) {
-                    Text("弃牌区")
-                    Slider(
-                        value: $viewModel.tableDividerPosition,
-                        in: 0.38...0.76,
-                        step: 0.01
-                    )
-                    .tint(.yellow)
-                    .onChange(of: viewModel.tableDividerPosition) { _ in
-                        viewModel.zonesDidChange()
-                    }
-                    Text("手牌区")
-                }
-                .font(.caption.bold())
 
                 HStack(spacing: 10) {
                     Text("副露宽度")
@@ -192,7 +176,7 @@ struct LiveCameraView: View {
                     }
                 }
 
-                Text("紫框统计全局弃牌；右侧橙框为副露。副露仅露出两张相同牌时，默认按四张暗杠补全。")
+                Text("不再识别桌面弃牌；右侧橙框只放自己的副露。副露仅露出两张相同牌时，默认按四张暗杠补全。")
                     .font(.caption)
                     .foregroundStyle(.white.opacity(0.78))
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -210,7 +194,6 @@ private struct DetectionOverlay: View {
     let detections: [MahjongDetection]
     let sourceSize: CGSize
     let viewSize: CGSize
-    let tableDividerPosition: CGFloat
     let meldAreaWidth: CGFloat
     let meldsOnRight: Bool
     let suggestedTile: MahjongTile?
@@ -218,21 +201,12 @@ private struct DetectionOverlay: View {
     var body: some View {
         let transform = AspectFitTransform(source: sourceSize, destination: viewSize)
         ZStack(alignment: .topLeading) {
-            let dividerY = transform.y(forNormalized: tableDividerPosition)
             let meldDividerX = transform.x(
                 forNormalized: meldsOnRight ? 1 - meldAreaWidth : meldAreaWidth
             )
-            Path { path in
-                path.move(to: CGPoint(x: transform.x(forNormalized: 0), y: dividerY))
-                path.addLine(to: CGPoint(x: transform.x(forNormalized: 1), y: dividerY))
-            }
-            .stroke(
-                Color.yellow.opacity(0.9),
-                style: StrokeStyle(lineWidth: 2, dash: [8, 6])
-            )
 
             Path { path in
-                path.move(to: CGPoint(x: meldDividerX, y: dividerY))
+                path.move(to: CGPoint(x: meldDividerX, y: transform.y(forNormalized: 0)))
                 path.addLine(
                     to: CGPoint(x: meldDividerX, y: transform.y(forNormalized: 1))
                 )
@@ -241,17 +215,6 @@ private struct DetectionOverlay: View {
                 Color.orange.opacity(0.95),
                 style: StrokeStyle(lineWidth: 2, dash: [7, 5])
             )
-
-            Text("全局弃牌区")
-                .font(.caption.bold())
-                .foregroundStyle(.white)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(.purple.opacity(0.9), in: Capsule())
-                .position(
-                    x: transform.x(forNormalized: 0.09),
-                    y: max(15, dividerY - 15)
-                )
 
             Text(meldsOnRight ? "右侧副露区" : "左侧副露区")
                 .font(.caption.bold())
@@ -265,7 +228,7 @@ private struct DetectionOverlay: View {
                             ? 1 - meldAreaWidth / 2
                             : meldAreaWidth / 2
                     ),
-                    y: dividerY + 15
+                    y: transform.y(forNormalized: 0.08)
                 )
 
             ForEach(detections) { detection in
@@ -316,15 +279,11 @@ private struct DetectionOverlay: View {
     }
 
     private enum Zone {
-        case discard
         case hand
         case meld
     }
 
     private func zone(for detection: MahjongDetection) -> Zone {
-        if detection.rect.midY < tableDividerPosition {
-            return .discard
-        }
         let isMeld = meldsOnRight
             ? detection.rect.midX > 1 - meldAreaWidth
             : detection.rect.midX < meldAreaWidth
@@ -333,8 +292,6 @@ private struct DetectionOverlay: View {
 
     private func overlayColor(for zone: Zone, isSuggested: Bool) -> Color {
         switch zone {
-        case .discard:
-            return .purple
         case .meld:
             return .orange
         case .hand:

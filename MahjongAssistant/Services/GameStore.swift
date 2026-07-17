@@ -6,7 +6,9 @@ final class GameStore: ObservableObject {
     @Published var concealed: [MahjongTile] = []
     @Published var melds: [Meld] = []
     @Published var seenCounts = Array(repeating: 0, count: 34)
+    @Published private(set) var ownDiscards: [MahjongTile] = []
     @Published var isReady = false
+    @Published var drawnTile: MahjongTile?
     @Published var lastIncoming: MahjongTile?
     @Published var opportunities: [Opportunity] = []
     @Published var notice = "先拍照识别或手动录入手牌"
@@ -96,9 +98,50 @@ final class GameStore: ObservableObject {
         notice = "已加入\(tile.fullName)"
     }
 
+    func draw(_ tile: MahjongTile) {
+        guard drawnTile == nil else {
+            notice = "本轮已经记录摸牌，请先在建议区切牌或撤销摸牌"
+            return
+        }
+        guard concealed.count % 3 == 1 else {
+            notice = concealed.count % 3 == 2
+                ? "当前已经是待切牌状态，请先点击建议区的切牌"
+                : "当前手牌张数不完整，请先校正手牌"
+            return
+        }
+        guard unavailableCount(for: tile) < 4 else {
+            notice = "\(tile.fullName)已知数量已经达到四张"
+            return
+        }
+
+        concealed.append(tile)
+        concealed.sort()
+        drawnTile = tile
+        clearTransientAdvice()
+        if currentShanten == -1, (!rules.winRequiresReady || isReady) {
+            notice = "摸到\(tile.shortName)，已经成牌，可以胡"
+        } else {
+            notice = "本轮摸到\(tile.shortName)，请按胜率建议切牌"
+        }
+    }
+
+    func cancelDraw() {
+        guard let tile = drawnTile,
+              let index = concealed.lastIndex(of: tile) else {
+            return
+        }
+        concealed.remove(at: index)
+        drawnTile = nil
+        clearTransientAdvice()
+        notice = "已撤销本轮摸到的\(tile.shortName)"
+    }
+
     func removeFromHand(_ tile: MahjongTile) {
         guard let index = concealed.lastIndex(of: tile) else { return }
         concealed.remove(at: index)
+        if drawnTile == tile {
+            drawnTile = nil
+        }
         clearTransientAdvice()
         if isReady, currentShanten != 0 {
             isReady = false
@@ -110,8 +153,36 @@ final class GameStore: ObservableObject {
         guard let index = concealed.lastIndex(of: tile) else { return }
         concealed.remove(at: index)
         seenCounts[tile.index] += 1
+        ownDiscards.append(tile)
+        drawnTile = nil
         clearTransientAdvice()
-        notice = currentShanten == 0 ? "切\(tile.shortName)后听牌，可按规则报听" : "已切\(tile.shortName)"
+        notice = "已切\(tile.shortName)，并记入自己的弃牌"
+    }
+
+    func commitDiscardSuggestion(_ suggestion: DiscardSuggestion) {
+        guard concealed.count % 3 == 2,
+              let index = concealed.lastIndex(of: suggestion.tile) else {
+            notice = "当前不是待切牌状态，请先在摸牌区记录摸牌"
+            return
+        }
+        guard !isReady || suggestion.shanten == 0 else {
+            notice = "已经报听，不能选择会破坏听牌状态的切牌"
+            return
+        }
+
+        concealed.remove(at: index)
+        seenCounts[suggestion.tile.index] += 1
+        ownDiscards.append(suggestion.tile)
+        drawnTile = nil
+        clearTransientAdvice()
+
+        let probability = Int((suggestion.winProbability * 100).rounded())
+        if !isReady, suggestion.shouldDeclareReady, currentShanten == 0 {
+            isReady = true
+            notice = "切\(suggestion.tile.shortName)并由模型报听；预计胡牌率 \(probability)%"
+        } else {
+            notice = "已切\(suggestion.tile.shortName)；预计胡牌率 \(probability)%"
+        }
     }
 
     func toggleReady() {
@@ -187,6 +258,7 @@ final class GameStore: ObservableObject {
     func commitConcealedKan(_ tile: MahjongTile) {
         guard rules.allowKan, removeCopies(of: tile, count: 4) else { return }
         melds.append(Meld(kind: .kan, tiles: Array(repeating: tile, count: 4)))
+        drawnTile = nil
         clearTransientAdvice()
         notice = "已记录暗杠\(tile.shortName)，请补牌"
     }
@@ -203,6 +275,7 @@ final class GameStore: ObservableObject {
             kind: .kan,
             tiles: Array(repeating: tile, count: 4)
         )
+        drawnTile = nil
         clearTransientAdvice()
         notice = "已记录加杠\(tile.shortName)，请补牌"
     }
@@ -221,7 +294,9 @@ final class GameStore: ObservableObject {
         concealed = []
         melds = []
         seenCounts = Array(repeating: 0, count: 34)
+        ownDiscards = []
         isReady = false
+        drawnTile = nil
         serverSuggestion = nil
         clearTransientAdvice()
         notice = "已清空牌局"
@@ -269,6 +344,7 @@ final class GameStore: ObservableObject {
             concealed = recognizedHand.sorted()
             melds = recognizedMelds
             isReady = false
+            drawnTile = nil
             serverSuggestion = result.suggestedPlay
             clearTransientAdvice(keepServerSuggestion: true)
             notice = result.warning ?? "识别完成；请点牌校正后再看建议"
@@ -283,7 +359,6 @@ final class GameStore: ObservableObject {
     func applyLiveRecognition(
         hand: [MahjongTile],
         exposedTiles: [MahjongTile],
-        discardedTiles: [MahjongTile],
         inferCoveredKans: Bool
     ) -> Bool {
         guard !hand.isEmpty else {
@@ -297,25 +372,23 @@ final class GameStore: ObservableObject {
         guard isPhysicallyValid(
             hand: hand,
             melds: recognizedMelds,
-            discarded: discardedTiles
+            discarded: ownDiscards
         ) else {
-            notice = "实时识别中有同牌超过四张，请调整角度"
+            notice = "实时识别结果与自己的弃牌合计超过四张，请调整角度或清空牌局"
             return false
         }
 
         let sortedHand = hand.sorted()
         let sameHand = sortedHand == concealed
-        let recognizedSeenCounts = discardedTiles.tileCounts
-        let sameDiscards = recognizedSeenCounts == seenCounts
         let oldMeldSignature = melds.map { "\($0.kind.rawValue):\($0.tiles.map(\.index))" }
         let newMeldSignature = recognizedMelds.map { "\($0.kind.rawValue):\($0.tiles.map(\.index))" }
-        guard !sameHand || !sameDiscards || oldMeldSignature != newMeldSignature else {
+        guard !sameHand || oldMeldSignature != newMeldSignature else {
             return true
         }
 
         concealed = sortedHand
         melds = recognizedMelds
-        seenCounts = recognizedSeenCounts
+        drawnTile = nil
         serverSuggestion = nil
         lastIncoming = nil
         opportunities = []

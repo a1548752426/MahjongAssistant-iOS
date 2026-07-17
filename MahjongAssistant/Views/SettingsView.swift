@@ -33,10 +33,11 @@ struct SettingsView: View {
 
                 Section {
                     instructionRow(number: "1", title: "横屏取景", detail: "让整排立牌完整入镜，避免手指遮挡和强烈反光。")
-                    instructionRow(number: "2", title: "调整黄线", detail: "黄线上方是全局弃牌区，下方是自己的手牌和副露。")
-                    instructionRow(number: "3", title: "副露默认放右边", detail: "右下橙色区域放碰/杠；可调整宽度或切换到左边。")
-                    instructionRow(number: "4", title: "处理盖牌", detail: "露出两张同牌会自动推断暗杠；完全盖住时点“全盖暗杠＋”手动指定。")
-                    instructionRow(number: "5", title: "看绿色牌框", detail: "稳定识别两帧后，绿色粗框和顶部文字就是建议打出的牌。")
+                    instructionRow(number: "2", title: "副露默认放右边", detail: "右侧橙色区域放碰/杠；可调整宽度或切换到左边。")
+                    instructionRow(number: "3", title: "处理盖牌", detail: "露出两张同牌会自动推断暗杠；完全盖住时点“全盖暗杠＋”手动指定。")
+                    instructionRow(number: "4", title: "记录摸牌", detail: "离开相机后，每轮在首页摸牌区点一下实际摸到的牌。")
+                    instructionRow(number: "5", title: "按建议切牌", detail: "建议按预计胡牌率排序；点“切牌”后才会扣牌并记录自己的弃牌。")
+                    instructionRow(number: "6", title: "自动报听", detail: "模型判断切牌后进入听牌时，会显示“切牌并报听”并自动记录报听状态。")
                 } header: {
                     Text("离线实时识别")
                 } footer: {
@@ -45,7 +46,7 @@ struct SettingsView: View {
 
                 Section {
                     LabeledContent("应用", value: "听牌助手")
-                    LabeledContent("版本", value: "1.1.1")
+                    LabeledContent("版本", value: "1.2.0")
                     LabeledContent("最低系统", value: "iOS 16")
                     VStack(alignment: .leading, spacing: 6) {
                         Text("隐私说明")
