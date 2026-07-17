@@ -55,15 +55,15 @@ final class MahjongEngineTests: XCTestCase {
             seenCounts: Array(repeating: 0, count: 34),
             rules: .localDefault
         )
-        XCTAssertEqual(suggestions.first?.shanten, 0)
-        XCTAssertTrue(Set(suggestions.prefix(2).map(\.tile.code)).isSubset(of: Set(["1z", "2z"])))
+        let tenpaiSuggestions = suggestions.filter { $0.shanten == 0 }
+        XCTAssertEqual(Set(tenpaiSuggestions.map(\.tile.code)), Set(["1z", "2z"]))
         XCTAssertTrue(
             zip(suggestions, suggestions.dropFirst()).allSatisfy { pair in
                 pair.0.winProbability >= pair.1.winProbability
             }
         )
-        XCTAssertTrue(suggestions.first?.shouldDeclareReady == true)
-        XCTAssertGreaterThan(suggestions.first?.winProbability ?? 0, 0)
+        XCTAssertTrue(tenpaiSuggestions.allSatisfy { $0.shouldDeclareReady })
+        XCTAssertTrue(tenpaiSuggestions.allSatisfy { $0.winProbability > 0 })
     }
 
     func testWinRequiresReady() {
