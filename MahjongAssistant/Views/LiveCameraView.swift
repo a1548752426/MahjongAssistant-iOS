@@ -285,12 +285,7 @@ private struct DetectionOverlay: View {
         let box = transform.rect(forNormalized: detection.rect)
         let zone = zone(for: detection)
         let isSuggested = zone == .hand && detection.tile == suggestedTile
-        let color: Color
-        switch zone {
-        case .discard: color = .purple
-        case .meld: color = .orange
-        case .hand: color = isSuggested ? .green : .cyan
-        }
+        let color = overlayColor(for: zone, isSuggested: isSuggested)
 
         ZStack(alignment: .topLeading) {
             RoundedRectangle(cornerRadius: 7)
@@ -334,6 +329,17 @@ private struct DetectionOverlay: View {
             ? detection.rect.midX > 1 - meldAreaWidth
             : detection.rect.midX < meldAreaWidth
         return isMeld ? .meld : .hand
+    }
+
+    private func overlayColor(for zone: Zone, isSuggested: Bool) -> Color {
+        switch zone {
+        case .discard:
+            return .purple
+        case .meld:
+            return .orange
+        case .hand:
+            return isSuggested ? .green : .cyan
+        }
     }
 }
 
